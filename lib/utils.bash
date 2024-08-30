@@ -2,7 +2,6 @@
 
 set -euo pipefail
 
-# TODO: Ensure this is the correct GitHub homepage where releases can be downloaded for spotbugs.
 GH_REPO="https://github.com/spotbugs/spotbugs"
 TOOL_NAME="spotbugs"
 TOOL_TEST="spotbugs -help"
@@ -14,7 +13,6 @@ fail() {
 
 curl_opts=(-fsSL)
 
-# NOTE: You might want to remove this if spotbugs is not hosted on GitHub releases.
 if [ -n "${GITHUB_API_TOKEN:-}" ]; then
 	curl_opts=("${curl_opts[@]}" -H "Authorization: token $GITHUB_API_TOKEN")
 fi
@@ -27,13 +25,23 @@ sort_versions() {
 list_github_tags() {
 	git ls-remote --tags --refs "$GH_REPO" |
 		grep -o 'refs/tags/.*' | cut -d/ -f3- |
-		sed 's/^v//' # NOTE: You might want to adapt this sed to remove non-version strings from tags
+		sed 's/^v//'
 }
 
 list_all_versions() {
-	# TODO: Adapt this. By default we simply list the tag names from GitHub releases.
-	# Change this function if spotbugs has other means of determining installable versions.
 	list_github_tags
+}
+
+get_platform() {
+	local platform
+	case "$(uname | tr '[:upper:]' '[:lower:]')" in
+	darwin) platform="apple-darwin" ;;
+	linux) platform="pc-linux" ;;
+	windows) platform="pc-win32" ;;
+	*) fail "Platform '$(uname)' not supported!" ;;
+	esac
+
+	echo -n $platform
 }
 
 download_release() {
@@ -41,11 +49,18 @@ download_release() {
 	version="$1"
 	filename="$2"
 
-	# TODO: Adapt the release URL convention for spotbugs
-	url="$GH_REPO/archive/v${version}.tar.gz"
+	url="$GH_REPO/releases/download/${version}/spotbugs-${version}"
 
 	echo "* Downloading $TOOL_NAME release $version..."
-	curl "${curl_opts[@]}" -o "$filename" -C - "$url" || fail "Could not download $url"
+	if [ "$(get_platform)" == "pc-win32" ]; then
+		url="$url.zip"
+		curl "${curl_opts[@]}" -o "$filename" "$url" || fail "Could not download $url"
+		unzip "$filename" || fail "Could not extract $filename"
+	else
+		url="$url.tgz"
+		curl "${curl_opts[@]}" -o "$filename" "$url" || fail "Could not download $url"
+		tar -xzf "$filename" -C "$ASDF_DOWNLOAD_PATH" --strip-components=1 || fail "Could not extract $filename"
+	fi
 }
 
 install_version() {
@@ -59,9 +74,8 @@ install_version() {
 
 	(
 		mkdir -p "$install_path"
-		cp -r "$ASDF_DOWNLOAD_PATH"/* "$install_path"
+		cp -r "$ASDF_DOWNLOAD_PATH"/* "$install_path/.."
 
-		# TODO: Assert spotbugs executable exists.
 		local tool_cmd
 		tool_cmd="$(echo "$TOOL_TEST" | cut -d' ' -f1)"
 		test -x "$install_path/$tool_cmd" || fail "Expected $install_path/$tool_cmd to be executable."
